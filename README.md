@@ -5,8 +5,7 @@
 - `source/icon-original.png` — logo original; `source/icon-path.json` — ícono vectorizado.
 - `tools/vectorize_icon.py`, `tools/build_logos.py` — regeneran todo (`pip install potracer fonttools cairosvg pillow numpy`).
 
-## Fuente Braze
-Coloca la fuente en `fonts/Braze.otf` (o `.ttf`/`.woff`) y ejecuta `python3 -I tools/build_logos.py`.
-Mientras no exista, el texto usa **Poppins Bold como respaldo provisional**.
+## Fuente
+El texto usa `fonts/Braze.ttf` convertido a trazados. Para regenerar: `python3 -I tools/build_logos.py`.
 
 Colores: primario `#3253CD`, oscuro `#0E1739`, sobre oscuro `#5772D6`.
