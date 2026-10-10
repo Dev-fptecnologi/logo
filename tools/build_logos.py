@@ -36,34 +36,37 @@ font = TTFont(FONT)
 gs, cmap, upm = font.getGlyphSet(), font.getBestCmap(), font["head"].unitsPerEm
 hmtx = font["hmtx"]
 
-def text_geometry():
-    """Devuelve (lista de (glifo, x), ancho_total, alto_mayúscula, y_min) en unidades de fuente."""
+_geo = {}
+def geometry(txt):
+    """(glifos con x, margen izq, ancho de tinta, alto mayúscula, base) en unidades de fuente."""
+    if txt in _geo: return _geo[txt]
     x, items = 0, []
-    for ch in TEXT:
+    for ch in txt:
         g = cmap[ord(ch)]
         items.append((g, x))
         x += hmtx[g][0] + TRACKING * upm
-    x -= TRACKING * upm
-    bp = BoundsPen(gs); gs["D"if "D" in gs else cmap[ord("D")]].draw(bp)
-    cap = bp.bounds[3] - bp.bounds[1]
-    # bordes reales de tinta primero/último glifo
+    bp = BoundsPen(gs); gs[cmap[ord("D")]].draw(bp)
     b0 = BoundsPen(gs); gs[items[0][0]].draw(b0)
     b1 = BoundsPen(gs); gs[items[-1][0]].draw(b1)
     left = b0.bounds[0]
-    right = items[-1][1] + b1.bounds[2]
-    return items, left, right - left, cap, bp.bounds[1]
+    _geo[txt] = (items, left, items[-1][1] + b1.bounds[2] - left, bp.bounds[3] - bp.bounds[1], bp.bounds[1])
+    return _geo[txt]
 
-ITEMS, LEFT, TW, CAP, BASE = text_geometry()
-
-def text_path(cap_h, tx, ty):
+def text_path(cap_h, tx, ty, txt=TEXT):
     """Path SVG del texto con altura de mayúscula cap_h, esquina sup-izq de la tinta en (tx, ty)."""
-    s = cap_h / CAP
+    items, left, tw, cap, base = geometry(txt)
+    s = cap_h / cap
     pen = SVGPathPen(gs, ntos=lambda v: f"{v:.2f}")
-    for g, gx in ITEMS:
-        # y de fuente hacia arriba -> y SVG hacia abajo
-        t = (s, 0, 0, -s, tx + (gx - LEFT) * s, ty + (BASE + CAP) * s)
-        gs[g].draw(TransformPen(pen, t))
-    return pen.getCommands(), TW * s
+    for g, gx in items:
+        gs[g].draw(TransformPen(pen, (s, 0, 0, -s, tx + (gx - left) * s, ty + (base + cap) * s)))
+    return pen.getCommands(), tw * s
+
+def chevron(direction, x, cy, cap):
+    """Chevron sólido < o > de altura 0.92*cap centrado en cy; devuelve (path, ancho)."""
+    h, d, k = cap * 0.43, cap * 0.46, cap * 0.25
+    pts = [(d, -h), (0, 0), (d, h), (d, h - k), (k * d / h, 0), (d, -h + k)]
+    if direction == ">": pts = [(d - px, py) for px, py in pts]
+    return "M" + "L".join(f"{x + px:.2f} {cy + py:.2f}" for px, py in pts) + "Z", d
 
 def svg(w, h, body):
     return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {w:.2f} {h:.2f}" '
@@ -72,8 +75,8 @@ def svg(w, h, body):
 def icon_el(ic, x=0, y=0, scale=1):
     return f'<path fill="{ic}" fill-rule="evenodd" transform="translate({x:.2f} {y:.2f}) scale({scale:.4f})" d="{ID}"/>'
 
-def text_el(tc, cap, x, y):
-    d, w = text_path(cap, x, y)
+def text_el(tc, cap, x, y, txt=TEXT):
+    d, w = text_path(cap, x, y, txt)
     return f'<path fill="{tc}" d="{d}"/>', w
 
 def build(kind, ic, tc):
@@ -95,10 +98,33 @@ def build(kind, ic, tc):
         W = max(IW, w)
         el, _ = text_el(tc, cap, (W - w) / 2, IH + gap)
         return W, IH + gap + cap, icon_el(ic, (W - IW) / 2) + el
+    if kind in ("brackets", "brackets-icon"):
+        cap = 100; g = cap * 0.14
+        x0 = IW + IH * 0.30 if kind == "brackets-icon" else 0
+        H = IH if kind == "brackets-icon" else cap
+        cy = H / 2
+        l, dw = chevron("<", x0, cy, cap)
+        el, w = text_el(tc, cap, x0 + dw + g, cy - cap / 2)
+        r, _ = chevron(">", x0 + dw + g + w + g, cy, cap)
+        body = (icon_el(ic, 0, 0, 1) if kind == "brackets-icon" else "")
+        return x0 + 2 * dw + 2 * g + w, H, body + f'<path fill="{ic}" d="{l}{r}"/>' + el
+    if kind == "social":
+        S = 600; line = 6
+        cap = S * 0.115
+        _, w = text_path(cap, 0, 0, "MARK")
+        k = S * 0.66 / w; cap *= k
+        iw = S * 0.52; isc = iw / IW; ih = IH * isc
+        gap1, gap2 = S * 0.08, cap * 0.38
+        total = ih + gap1 + 2 * cap + gap2
+        y = (S - total) / 2
+        e1, w1 = text_el(tc, cap, 0, 0, "DEV"); e1, _ = text_el(tc, cap, (S - w1) / 2, y + ih + gap1, "DEV")
+        e2, w2 = text_el(tc, cap, 0, 0, "MARK"); e2, _ = text_el(tc, cap, (S - w2) / 2, y + ih + gap1 + cap + gap2, "MARK")
+        frame = f'<rect x="{line/2}" y="{line/2}" width="{S-line}" height="{S-line}" fill="none" stroke="{tc}" stroke-width="{line}"/>'
+        return S, S, frame + icon_el(ic, (S - iw) / 2, y, isc) + e1 + e2
     raise ValueError(kind)
 
 os.makedirs(OUT, exist_ok=True)
-KINDS = ["horizontal", "vertical", "icon", "wordmark"]
+KINDS = ["horizontal", "vertical", "icon", "wordmark", "brackets", "brackets-icon", "social"]
 made = {}
 for kind in KINDS:
     for var, (ic, tc, _) in VARIANTS.items():
@@ -123,7 +149,7 @@ cairosvg.svg2png(bytestring=svg(s, s, app).encode(), write_to=f"{OUT}/favicon-32
 bgs = {"color": "#FFFFFF", "color-dark": P900, "white": P500, "black": "#EAEEFA"}
 cols = ["color", "color-dark", "white", "black"]
 CW, CH, PAD = 560, 300, 40
-sheet = [f'<rect width="{CW*4}" height="{CH*4}" fill="#fff"/>']
+sheet = [f'<rect width="{CW*4}" height="{CH*len(KINDS)}" fill="#fff"/>']
 for r, kind in enumerate(KINDS):
     for c, var in enumerate(cols):
         w, h, body = made[(kind, var)]
@@ -131,6 +157,6 @@ for r, kind in enumerate(KINDS):
         x, y = c * CW, r * CH
         sheet.append(f'<rect x="{x}" y="{y}" width="{CW}" height="{CH}" fill="{bgs[var]}"/>')
         sheet.append(f'<g transform="translate({x + (CW - w*sc)/2:.1f} {y + (CH - h*sc)/2:.1f}) scale({sc:.4f})">{body}</g>')
-open(f"{OUT}/_preview.svg", "w").write(svg(CW * 4, CH * 4, "".join(sheet)))
-cairosvg.svg2png(bytestring=svg(CW * 4, CH * 4, "".join(sheet)).encode(), write_to=f"{OUT}/_preview.png", output_width=1800)
+open(f"{OUT}/_preview.svg", "w").write(svg(CW * 4, CH * len(KINDS), "".join(sheet)))
+cairosvg.svg2png(bytestring=svg(CW * 4, CH * len(KINDS), "".join(sheet)).encode(), write_to=f"{OUT}/_preview.png", output_width=1800)  # hoja
 print("Listo:", len(os.listdir(OUT)), "archivos en", OUT, "| RESPALDO" if USING_FALLBACK else "")
